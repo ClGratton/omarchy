@@ -160,7 +160,11 @@ function outputRows(sinks, profiles) {
     })
   }
 
-  return rows
+  return rows.sort(function(a, b) {
+    var left = String(a && a.label || "")
+    var right = String(b && b.label || "")
+    return left < right ? -1 : left > right ? 1 : 0
+  })
 }
 
 // outputRows keeps the live node on sink rows. Project the rows to primitives the
