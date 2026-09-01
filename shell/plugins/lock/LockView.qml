@@ -16,6 +16,7 @@ FocusScope {
   property int failedAttempts: 0
   property bool inputEnabled: true
   property bool loadBackground: true
+  property bool concealAuthentication: false
   property string passwordText: ""
   property bool syncingPasswordText: false
   property int focusGeneration: 0
@@ -47,6 +48,7 @@ FocusScope {
   signal clearFailureRequested()
   signal wakeRequested()
   signal passwordFocusAcquired()
+  signal pointerWakeRequested()
 
   // Cache-busts the lock background by appending `?v=`. Adding a query
   // string keeps Image's loader happy while forcing it to reload when the
@@ -102,12 +104,12 @@ FocusScope {
 
   Rectangle {
     anchors.fill: parent
-    color: Color.background
+    color: root.concealAuthentication ? "black" : Color.background
 
     Image {
       id: wallpaper
       anchors.fill: parent
-      source: root.loadBackground ? root.fileUrl(root.backgroundPath) : ""
+      source: root.loadBackground && !root.concealAuthentication ? root.fileUrl(root.backgroundPath) : ""
       fillMode: Image.PreserveAspectCrop
       asynchronous: true
       cache: false
@@ -118,6 +120,7 @@ FocusScope {
     MultiEffect {
       anchors.fill: wallpaper
       source: wallpaper
+      visible: !root.concealAuthentication
       autoPaddingEnabled: false
       blurEnabled: root.loadBackground && wallpaper.status === Image.Ready
       blur: 1.0
@@ -129,8 +132,9 @@ FocusScope {
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      onClicked: { root.wakeRequested(); root.forcePasswordFocus() }
-      onPositionChanged: root.wakeRequested()
+      cursorShape: root.concealAuthentication ? Qt.BlankCursor : Qt.ArrowCursor
+      onClicked: { root.pointerWakeRequested(); root.forcePasswordFocus() }
+      onPositionChanged: root.pointerWakeRequested()
     }
 
     BorderSurface {
@@ -142,6 +146,7 @@ FocusScope {
       borderSpec: root.inputBorderSpec
       radius: Style.cornerRadius
       clip: true
+      opacity: root.concealAuthentication ? 0 : 1
 
       TextInput {
         id: passwordInput

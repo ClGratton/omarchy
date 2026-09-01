@@ -35,6 +35,10 @@ Item {
   property string lastEventAt: ""
   property bool strandedLock: false
   property bool strandedLockResolved: false
+  property bool idleTransitionConcealed: false
+  property bool idleTransitionPointerArmed: false
+
+  readonly property int idleTransitionPointerSettleMilliseconds: 2000
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -169,6 +173,28 @@ Item {
     return true
   }
 
+  function beginIdleLock() {
+    if (root.locked) return true
+
+    // Set this before requesting ext-session-lock so every output's first lock
+    // frame is black while the fullscreen screensaver is being replaced.
+    root.idleTransitionConcealed = true
+    root.idleTransitionPointerArmed = false
+    idleTransitionPointerTimer.stop()
+    root.logEvent("idle-transition-concealed")
+
+    if (beginLock()) return true
+
+    root.idleTransitionConcealed = false
+    return false
+  }
+
+  function armIdleTransitionPointer() {
+    if (!root.idleTransitionConcealed || !sessionLock.secure || !root.hasRealScreen()) return
+    root.idleTransitionPointerArmed = false
+    idleTransitionPointerTimer.restart()
+  }
+
   function finishUnlock() {
     if (!root.locked && !lockRequested) return
 
@@ -192,12 +218,23 @@ Item {
   }
 
   function runWake() {
+    idleTransitionConcealed = false
+    idleTransitionPointerArmed = false
+    idleTransitionPointerTimer.stop()
     if (!wakeProcess.running) wakeProcess.running = true
     if (lockRequested) armBlankTimer()
   }
 
   function runBlank() {
     if (!blankProcess.running) blankProcess.running = true
+  }
+
+  function handlePointerWake() {
+    // Lock-surface mapping reports the pointer's existing position. Ignore it
+    // until the secure multi-output lock has settled; later movement is real
+    // user input and may reveal the authentication view.
+    if (root.idleTransitionConcealed && !root.idleTransitionPointerArmed) return
+    runWake()
   }
 
   function submitPassword(value) {
@@ -267,6 +304,7 @@ Item {
         pendingSessionLockTimer.stop()
         root.beginPasswordFocusRecovery()
         root.startFingerprint()
+        root.armIdleTransitionPointer()
       }
     }
 
@@ -291,7 +329,7 @@ Item {
 
     WlSessionLockSurface {
       id: lockSurface
-      color: Color.background
+      color: root.idleTransitionConcealed ? "black" : Color.background
 
       LockView {
         id: lockView
@@ -304,6 +342,7 @@ Item {
         failedAttempts: root.failedAttempts
         inputEnabled: root.lockRequested
         loadBackground: root.locked
+        concealAuthentication: root.idleTransitionConcealed
         passwordText: root.enteredPassword
         focusGeneration: root.passwordFocusGeneration
         onPasswordTextEdited: function(password) { root.enteredPassword = password }
@@ -311,6 +350,7 @@ Item {
         onClearFailureRequested: root.failureMessage = ""
         onWakeRequested: root.runWake()
         onPasswordFocusAcquired: root.passwordFocusAcquired = true
+        onPointerWakeRequested: root.handlePointerWake()
       }
 
     }
@@ -493,6 +533,17 @@ Item {
   }
 
   Timer {
+    id: idleTransitionPointerTimer
+    interval: root.idleTransitionPointerSettleMilliseconds
+    repeat: false
+    onTriggered: {
+      if (!root.idleTransitionConcealed || !sessionLock.secure || !root.hasRealScreen()) return
+      root.idleTransitionPointerArmed = true
+      root.logEvent("idle-transition-pointer-armed")
+    }
+  }
+
+  Timer {
     id: sessionLockStabilizeTimer
     interval: 500
     repeat: false
@@ -530,6 +581,7 @@ Item {
     function onScreensChanged() {
       root.requestSessionLock()
       root.beginPasswordFocusRecovery()
+      root.armIdleTransitionPointer()
 
       // A monitor still coming up has no workspace, so cannot answer yet.
       strandedLockRetryTimer.rearm()
@@ -591,6 +643,12 @@ Item {
       return "ok"
     }
 
+    function lockFromIdle(): string {
+      if (!root.passwordPamConfigured) return "missing-pam"
+      if (!root.locked && !root.beginIdleLock()) return "failed"
+      return "ok"
+    }
+
     function isLocked(): string {
       return root.locked ? "true" : "false"
     }
@@ -609,6 +667,8 @@ Item {
         passwordFocusAcquired: root.passwordFocusAcquired,
         focusRecoveryRemaining: focusRecoveryTimer.remaining,
         focusRecoveryCompleteBudget: focusRecoveryTimer.completeBudget,
+        idleTransitionConcealed: root.idleTransitionConcealed,
+        idleTransitionPointerArmed: root.idleTransitionPointerArmed,
         lastEvent: root.lastEvent,
         lastEventAt: root.lastEventAt
       })
