@@ -37,8 +37,11 @@ Item {
   property bool strandedLockResolved: false
   property bool idleTransitionConcealed: false
   property bool idleTransitionPointerArmed: false
+  property bool sleepTransitionConcealed: false
+  property bool sleepTransitionPointerArmed: false
 
   readonly property int idleTransitionPointerSettleMilliseconds: 2000
+  readonly property bool transitionConcealed: idleTransitionConcealed || sleepTransitionConcealed
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -189,10 +192,42 @@ Item {
     return false
   }
 
+  function beginSleepLock() {
+    // Set this before requesting ext-session-lock so every output's first lock
+    // frame is black. An independent logind monitor clears it only after the
+    // matching post-resume state is known.
+    root.sleepTransitionConcealed = true
+    root.sleepTransitionPointerArmed = false
+    sleepTransitionPointerTimer.stop()
+    root.logEvent("sleep-transition-concealed")
+
+    if (root.locked) {
+      idleBlankTimer.stop()
+      armSleepTransitionPointer()
+      return true
+    }
+
+    if (beginLock()) {
+      // System sleep owns output power sequencing. Never let the ordinary lock
+      // timer send DPMS-off while logind is preparing the transition.
+      idleBlankTimer.stop()
+      return true
+    }
+
+    root.sleepTransitionConcealed = false
+    return false
+  }
+
   function armIdleTransitionPointer() {
     if (!root.idleTransitionConcealed || !sessionLock.secure || !root.hasRealScreen()) return
     root.idleTransitionPointerArmed = false
     idleTransitionPointerTimer.restart()
+  }
+
+  function armSleepTransitionPointer() {
+    if (!root.sleepTransitionConcealed || !sessionLock.secure || !root.hasRealScreen()) return
+    root.sleepTransitionPointerArmed = false
+    sleepTransitionPointerTimer.restart()
   }
 
   function finishUnlock() {
@@ -207,6 +242,9 @@ Item {
     focusRecoveryTimer.stop()
     focusRecoveryTimer.remaining = 0
     focusRecoveryTimer.completeBudget = false
+    sleepTransitionConcealed = false
+    sleepTransitionPointerArmed = false
+    sleepTransitionPointerTimer.stop()
     sessionLock.locked = false
     logEvent("unlocked")
     runWake()
@@ -217,10 +255,16 @@ Item {
     idleBlankTimer.restart()
   }
 
-  function runWake() {
+  function runWake(reason) {
+    if (sleepTransitionConcealed) {
+      root.logEvent("sleep-transition-revealed: " + (reason || "input"))
+    }
     idleTransitionConcealed = false
     idleTransitionPointerArmed = false
     idleTransitionPointerTimer.stop()
+    sleepTransitionConcealed = false
+    sleepTransitionPointerArmed = false
+    sleepTransitionPointerTimer.stop()
     if (!wakeProcess.running) wakeProcess.running = true
     if (lockRequested) armBlankTimer()
   }
@@ -234,6 +278,7 @@ Item {
     // until the secure multi-output lock has settled; later movement is real
     // user input and may reveal the authentication view.
     if (root.idleTransitionConcealed && !root.idleTransitionPointerArmed) return
+    if (root.sleepTransitionConcealed && !root.sleepTransitionPointerArmed) return
     runWake()
   }
 
@@ -305,6 +350,7 @@ Item {
         root.beginPasswordFocusRecovery()
         root.startFingerprint()
         root.armIdleTransitionPointer()
+        root.armSleepTransitionPointer()
       }
     }
 
@@ -329,7 +375,7 @@ Item {
 
     WlSessionLockSurface {
       id: lockSurface
-      color: root.idleTransitionConcealed ? "black" : Color.background
+      color: root.transitionConcealed ? "black" : Color.background
 
       LockView {
         id: lockView
@@ -342,7 +388,7 @@ Item {
         failedAttempts: root.failedAttempts
         inputEnabled: root.lockRequested
         loadBackground: root.locked
-        concealAuthentication: root.idleTransitionConcealed
+        concealAuthentication: root.transitionConcealed
         passwordText: root.enteredPassword
         focusGeneration: root.passwordFocusGeneration
         onPasswordTextEdited: function(password) { root.enteredPassword = password }
@@ -544,6 +590,17 @@ Item {
   }
 
   Timer {
+    id: sleepTransitionPointerTimer
+    interval: root.idleTransitionPointerSettleMilliseconds
+    repeat: false
+    onTriggered: {
+      if (!root.sleepTransitionConcealed || !sessionLock.secure || !root.hasRealScreen()) return
+      root.sleepTransitionPointerArmed = true
+      root.logEvent("sleep-transition-pointer-armed")
+    }
+  }
+
+  Timer {
     id: sessionLockStabilizeTimer
     interval: 500
     repeat: false
@@ -582,6 +639,7 @@ Item {
       root.requestSessionLock()
       root.beginPasswordFocusRecovery()
       root.armIdleTransitionPointer()
+      root.armSleepTransitionPointer()
 
       // A monitor still coming up has no workspace, so cannot answer yet.
       strandedLockRetryTimer.rearm()
@@ -638,14 +696,29 @@ Item {
     }
 
     function resumeFromSleep(): string {
-      if (!root.lockRequested) return "idle"
-      root.beginPasswordFocusRecovery(true)
-      return "ok"
+      var handled = false
+
+      if (root.sleepTransitionConcealed) {
+        root.runWake("resume-signal")
+        handled = true
+      }
+      if (root.lockRequested) {
+        root.beginPasswordFocusRecovery(true)
+        handled = true
+      }
+
+      return handled ? "ok" : "idle"
     }
 
     function lockFromIdle(): string {
       if (!root.passwordPamConfigured) return "missing-pam"
       if (!root.locked && !root.beginIdleLock()) return "failed"
+      return "ok"
+    }
+
+    function lockForSleep(): string {
+      if (!root.passwordPamConfigured) return "missing-pam"
+      if (!root.beginSleepLock()) return "failed"
       return "ok"
     }
 
@@ -669,6 +742,8 @@ Item {
         focusRecoveryCompleteBudget: focusRecoveryTimer.completeBudget,
         idleTransitionConcealed: root.idleTransitionConcealed,
         idleTransitionPointerArmed: root.idleTransitionPointerArmed,
+        sleepTransitionConcealed: root.sleepTransitionConcealed,
+        sleepTransitionPointerArmed: root.sleepTransitionPointerArmed,
         lastEvent: root.lastEvent,
         lastEventAt: root.lastEventAt
       })

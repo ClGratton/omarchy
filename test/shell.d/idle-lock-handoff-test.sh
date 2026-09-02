@@ -23,7 +23,8 @@ assert(
   'idle concealment is enabled before ext-session-lock begins'
 )
 assert(
-  /concealAuthentication: root\.idleTransitionConcealed/.test(lockQml)
+  /readonly property bool transitionConcealed: idleTransitionConcealed \|\| sleepTransitionConcealed/.test(lockQml)
+    && /concealAuthentication: root\.transitionConcealed/.test(lockQml)
     && /property bool concealAuthentication: false/.test(viewQml)
     && /color: root\.concealAuthentication \? "black" : Color\.background/.test(viewQml)
     && /opacity: root\.concealAuthentication \? 0 : 1/.test(viewQml),

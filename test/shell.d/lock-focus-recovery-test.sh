@@ -40,7 +40,7 @@ assert(
 )
 
 assert(
-  /function resumeFromSleep\(\): string \{[\s\S]*if \(!root\.lockRequested\) return "idle"[\s\S]*root\.beginPasswordFocusRecovery\(true\)/.test(serviceQml),
+  /function resumeFromSleep\(\): string \{[\s\S]*if \(root\.lockRequested\) \{[\s\S]*root\.beginPasswordFocusRecovery\(true\)/.test(serviceQml),
   'an explicit post-resume event starts the complete focus retry budget'
 )
 

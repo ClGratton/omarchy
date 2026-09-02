@@ -76,7 +76,7 @@ cat >"$mock_bin/omarchy-shell" <<'SH'
 #!/bin/bash
 
 printf 'shell %s\n' "$*" >>"$CALL_LOG"
-if [[ $* == "lock lock" ]]; then
+if [[ $* == "lock lockForSleep" ]]; then
   printf 'ok\n'
 elif [[ $* == "lock status" ]]; then
   printf '{"secure":true}\n'
@@ -91,7 +91,7 @@ run_sleep_lock 4000
   fail "sleep lock succeeds once the session reports secure" "exit: $exit_status"
 pass "sleep lock succeeds once the session reports secure"
 
-[[ ${calls[0]} == "shell lock lock" ]] ||
+[[ ${calls[0]} == "shell lock lockForSleep" ]] ||
   fail "sleep lock requests the session lock first" "first call: ${calls[0]}"
 pass "sleep lock requests the session lock first"
 
@@ -110,7 +110,7 @@ cat >"$mock_bin/omarchy-shell" <<'SH'
 #!/bin/bash
 
 printf 'shell %s\n' "$*" >>"$CALL_LOG"
-if [[ $* == "lock lock" ]]; then
+if [[ $* == "lock lockForSleep" ]]; then
   printf 'ok\n'
 elif [[ $* == "lock status" ]]; then
   printf '{"secure":false}\n'
@@ -153,7 +153,7 @@ cat >"$mock_bin/omarchy-shell" <<'SH'
 
 printf 'shell %s\n' "$*" >>"$CALL_LOG"
 
-if [[ $* == "lock lock" ]]; then
+if [[ $* == "lock lockForSleep" ]]; then
   if [[ -f $STATE_DIR/requested ]]; then
     touch "$STATE_DIR/locked"
     printf 'ok\n'
@@ -182,7 +182,7 @@ pass "sleep lock retries a failed lock request"
 
 requests=0
 for call in "${calls[@]}"; do
-  [[ $call == "shell lock lock" ]] && (( ++requests ))
+  [[ $call == "shell lock lockForSleep" ]] && (( ++requests ))
 done
 (( requests == 2 )) ||
   fail "sleep lock stops requesting once the lock lands" "requests: $requests"
@@ -197,7 +197,7 @@ cat >"$mock_bin/omarchy-shell" <<'SH'
 
 printf 'shell %s\n' "$*" >>"$CALL_LOG"
 
-if [[ $* == "lock lock" ]]; then
+if [[ $* == "lock lockForSleep" ]]; then
   exit 1
 fi
 
@@ -221,7 +221,7 @@ pass "sleep lock succeeds after observing a pending lock"
 
 requests=0
 for call in "${calls[@]}"; do
-  [[ $call == "shell lock lock" ]] && (( ++requests ))
+  [[ $call == "shell lock lockForSleep" ]] && (( ++requests ))
 done
 (( requests == 1 )) ||
   fail "sleep lock does not retry an observed pending lock" "requests: $requests"
@@ -234,7 +234,7 @@ cat >"$mock_bin/omarchy-shell" <<'SH'
 #!/bin/bash
 
 printf 'shell %s\n' "$*" >>"$CALL_LOG"
-if [[ $* == "lock lock" ]]; then
+if [[ $* == "lock lockForSleep" ]]; then
   printf 'missing-pam\n'
 fi
 exit 0
@@ -274,7 +274,7 @@ never_secures() {
 #!/bin/bash
 
 printf 'shell %s\n' "$*" >>"$CALL_LOG"
-if [[ $* == "lock lock" ]]; then
+if [[ $* == "lock lockForSleep" ]]; then
   printf 'ok\n'
 elif [[ $* == "lock status" ]]; then
   printf '{"secure":false,"requested":true,"pending":true,"sessionLocked":false}\n'

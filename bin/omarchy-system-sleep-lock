@@ -69,7 +69,7 @@ lock_ipc() {
 # the status poll is what confirms success, and re-requesting is idempotent, so
 # a request that may not have landed costs nothing to repeat.
 request_lock() {
-  case $(lock_ipc "$lock_timeout_ms" lock lock 2>/dev/null) in
+  case $(lock_ipc "$lock_timeout_ms" lock lockForSleep 2>/dev/null) in
     missing-pam) report_unsecured "no lock screen is configured" ;;
   esac
 }
