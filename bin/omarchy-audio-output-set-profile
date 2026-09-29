@@ -28,9 +28,12 @@ fi
 
 timeout 2 pactl set-card-profile "$card_name" "$profile_name"
 
-profile_device=${profile_name#output:}
+# The sink is named after the output mapping alone, so a duplex profile such as
+# output:hdmi-stereo+input:analog-stereo creates the hdmi-stereo sink.
+output_mapping=${profile_name#output:}
+output_mapping=${output_mapping%%+*}
 for _ in {1..20}; do
-  sink=$(timeout 2 pactl -f json list sinks 2>/dev/null | jq -c --arg card "$card_name" --arg profile "$profile_device" '
+  sink=$(timeout 2 pactl -f json list sinks 2>/dev/null | jq -c --arg card "$card_name" --arg profile "$output_mapping" '
     first(.[]
       | select(.properties["device.name"] == $card)
       | select(.properties["device.profile.name"] == $profile)) // empty
