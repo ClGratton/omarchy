@@ -1,0 +1,37 @@
+[
+  {
+    "name": "alsa_card.pch",
+    "active_profile": "output:analog-stereo+input:analog-stereo",
+    "profiles": {
+      "output:analog-stereo+input:analog-stereo": { "sinks": 1, "sources": 1, "priority": 6565, "available": true },
+      "output:analog-stereo": { "sinks": 1, "sources": 0, "priority": 6500, "available": true },
+      "output:hdmi-stereo+input:analog-stereo": { "sinks": 1, "sources": 1, "priority": 5965, "available": true },
+      "output:hdmi-stereo": { "sinks": 1, "sources": 0, "priority": 5900, "available": true },
+      "output:hdmi-stereo-extra1": { "sinks": 1, "priority": 5700, "available": false },
+      "input:analog-stereo": { "sinks": 0, "sources": 1, "priority": 65, "available": true }
+    },
+    "ports": {
+      "analog-input-internal-mic": {
+        "description": "Internal Microphone", "priority": 8900, "availability": "availability unknown",
+        "profiles": ["input:analog-stereo", "output:analog-stereo+input:analog-stereo", "output:hdmi-stereo+input:analog-stereo"]
+      },
+      "analog-output-lineout": {
+        "description": "Line Out", "priority": 9000, "availability": "availability unknown",
+        "profiles": ["output:analog-stereo", "output:analog-stereo+input:analog-stereo"]
+      },
+      "analog-output-speaker": {
+        "description": "Speakers", "priority": 10000, "availability": "availability unknown",
+        "profiles": ["output:analog-stereo", "output:analog-stereo+input:analog-stereo"]
+      },
+      "hdmi-output-0": {
+        "description": "HDMI / DisplayPort", "priority": 5900, "availability": "available",
+        "properties": { "device.product.name": "Panasonic-TV" },
+        "profiles": ["output:hdmi-stereo", "output:hdmi-stereo+input:analog-stereo"]
+      },
+      "hdmi-output-1": {
+        "description": "HDMI / DisplayPort 2", "priority": 5800, "availability": "availability unknown",
+        "profiles": ["output:hdmi-stereo-extra1"]
+      }
+    }
+  }
+]

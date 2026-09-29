@@ -625,7 +625,13 @@ Panel {
   Process {
     id: outputProfileSetProc
     onExited: function(exitCode) {
-      if (exitCode !== 0) console.warn("Could not switch audio output profile")
+      if (exitCode !== 0) {
+        console.warn("Could not switch audio output profile")
+        Quickshell.execDetached([
+          "omarchy-notification-send", "Could not switch audio output",
+          "Check that the device is connected and try again."
+        ])
+      }
       if (!outputProfileProc.running) outputProfileProc.running = true
     }
   }

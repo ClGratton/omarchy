@@ -1,0 +1,17 @@
+[
+  {
+    "type": "PipeWire:Interface:Device",
+    "info": {
+      "props": { "device.name": "alsa_card.pch" },
+      "params": {
+        "EnumRoute": [
+          { "name": "analog-input-internal-mic", "direction": "Input", "available": "unknown" },
+          { "name": "analog-output-lineout", "direction": "Output", "available": "unknown" },
+          { "name": "analog-output-speaker", "direction": "Output", "available": "unknown" },
+          { "name": "hdmi-output-0", "direction": "Output", "available": "yes" },
+          { "name": "hdmi-output-1", "direction": "Output", "available": "unknown" }
+        ]
+      }
+    }
+  }
+]
