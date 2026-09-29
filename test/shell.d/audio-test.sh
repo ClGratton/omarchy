@@ -50,6 +50,34 @@ const reorderedRows = audio.outputRows([{ ...activeSink, name: 'alsa_output.gpu.
 ])
 assertEqual(reorderedRows[0].label, 'Left Monitor', 'audio keeps output rows sorted when the active profile changes')
 assertEqual(reorderedRows[1].label, 'Right Monitor', 'audio does not move the selected output to the front')
+// A duplex profile keeps the microphone on, but its sink is named after the
+// output mapping alone and reports only that as its device.profile.name.
+assertEqual(
+  audio.outputProfileSinkName('alsa_card.pci-0000_00_1f.3', 'output:hdmi-stereo+input:analog-stereo'),
+  'alsa_output.pci-0000_00_1f.3.hdmi-stereo',
+  'audio derives the sink name created by a duplex output profile'
+)
+const duplexSink = {
+  name: 'alsa_output.pci-0000_00_1f.3.hdmi-stereo',
+  ready: true,
+  properties: { 'device.name': 'alsa_card.pci-0000_00_1f.3', 'device.profile.name': 'hdmi-stereo' }
+}
+assertEqual(
+  audio.sinkProfileKey(duplexSink),
+  audio.outputProfileKey('alsa_card.pci-0000_00_1f.3', 'output:hdmi-stereo+input:analog-stereo'),
+  'audio matches a sink to its duplex output profile'
+)
+const duplexProfiles = [
+  { cardName: 'alsa_card.pci-0000_00_1f.3', profileName: 'output:analog-stereo+input:analog-stereo', label: 'Speakers', description: 'Analog Stereo Duplex' },
+  { cardName: 'alsa_card.pci-0000_00_1f.3', profileName: 'output:hdmi-stereo+input:analog-stereo', label: 'DELL U2720Q', description: 'Digital Stereo (HDMI) Output + Analog Stereo Input' }
+]
+const duplexRows = audio.outputRows([duplexSink], duplexProfiles)
+assertEqual(duplexRows.length, 2, 'audio shows an active duplex output once')
+assertEqual(duplexRows[0].kind, 'sink', 'audio keeps the active duplex output as its sink row')
+assertEqual(duplexRows[0].label, 'DELL U2720Q', 'audio labels the active duplex sink from its card port')
+assertEqual(duplexRows[1].profileName, 'output:analog-stereo+input:analog-stereo', 'audio activates the full duplex profile to keep the microphone')
+const unboundDuplexRows = audio.outputRows([{ ...duplexSink, ready: false }], duplexProfiles)
+assertEqual(unboundDuplexRows.length, 2, 'audio matches an unbound duplex sink by name')
 assertEqual(audio.friendlyDeviceLabel('Built-in Audio Speakers Output'), 'Speakers', 'audio cleans device labels')
 assertEqual(
   audio.nodeLabel({ ready: true, properties: { 'node.nick': 'Built-in Audio Microphones Input' }, name: 'alsa_input' }),

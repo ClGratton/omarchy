@@ -71,15 +71,28 @@ function parseOutputProfiles(raw) {
   }
 }
 
+// A sink is named after the output mapping alone, so the duplex profile
+// output:hdmi-stereo+input:analog-stereo and output:hdmi-stereo share the
+// hdmi-stereo sink. Match on the mapping; activate the full profile name.
+function outputProfileMapping(profileName) {
+  var parts = String(profileName || "").split("+")
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i].indexOf("output:") === 0) return parts[i].slice(7)
+  }
+  return ""
+}
+
 function outputProfileKey(cardName, profileName) {
-  return String(cardName || "") + "|" + String(profileName || "")
+  var mapping = outputProfileMapping(profileName)
+  if (!cardName || !mapping) return ""
+  return String(cardName) + "|" + mapping
 }
 
 function outputProfileSinkName(cardName, profileName) {
   cardName = String(cardName || "")
-  profileName = String(profileName || "")
-  if (cardName.indexOf("alsa_card.") !== 0 || profileName.indexOf("output:") !== 0) return ""
-  return "alsa_output." + cardName.slice(10) + "." + profileName.slice(7)
+  var mapping = outputProfileMapping(profileName)
+  if (cardName.indexOf("alsa_card.") !== 0 || !mapping) return ""
+  return "alsa_output." + cardName.slice(10) + "." + mapping
 }
 
 function sinkProfileKey(node) {
@@ -103,7 +116,7 @@ function outputRows(sinks, profiles) {
     var availableProfile = profileValues[i]
     var availableKey = outputProfileKey(availableProfile.cardName, availableProfile.profileName)
     var sinkName = outputProfileSinkName(availableProfile.cardName, availableProfile.profileName)
-    profilesByKey[availableKey] = availableProfile
+    if (availableKey) profilesByKey[availableKey] = availableProfile
     if (sinkName) profilesBySinkName[sinkName] = availableProfile
   }
 
@@ -335,6 +348,7 @@ if (typeof module !== "undefined") {
     outputVolumeName: outputVolumeName,
     parseSinkAvailability: parseSinkAvailability,
     parseOutputProfiles: parseOutputProfiles,
+    outputProfileMapping: outputProfileMapping,
     outputProfileKey: outputProfileKey,
     outputProfileSinkName: outputProfileSinkName,
     sinkProfileKey: sinkProfileKey,
