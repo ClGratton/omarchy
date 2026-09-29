@@ -72,14 +72,22 @@ function parseOutputProfiles(raw) {
 }
 
 function outputProfileKey(cardName, profileName) {
-  return String(cardName || "") + "|" + String(profileName || "")
+  var mapping = outputProfileMapping(profileName)
+  return mapping ? String(cardName || "") + "|output:" + mapping : ""
+}
+
+function outputProfileMapping(profileName) {
+  var outputs = String(profileName || "").split("+").filter(function(part) {
+    return part.indexOf("output:") === 0
+  })
+  return outputs.length === 1 ? outputs[0].slice(7) : ""
 }
 
 function outputProfileSinkName(cardName, profileName) {
   cardName = String(cardName || "")
-  profileName = String(profileName || "")
-  if (cardName.indexOf("alsa_card.") !== 0 || profileName.indexOf("output:") !== 0) return ""
-  return "alsa_output." + cardName.slice(10) + "." + profileName.slice(7)
+  var mapping = outputProfileMapping(profileName)
+  if (cardName.indexOf("alsa_card.") !== 0 || !mapping) return ""
+  return "alsa_output." + cardName.slice(10) + "." + mapping
 }
 
 function sinkProfileKey(node) {

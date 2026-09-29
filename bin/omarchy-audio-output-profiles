@@ -5,28 +5,44 @@
 
 set -euo pipefail
 
-timeout 2 pactl -f json list cards 2>/dev/null | jq -c '
+# PulseAudio card ports do not expose direction. Use PipeWire routes so an
+# input port advertising a duplex profile cannot become an output row.
+output_ports=$(timeout 2 pw-dump | jq -c '
+  [ .[]
+    | select(.type == "PipeWire:Interface:Device")
+    | .info as $device
+    | $device.params.EnumRoute[]?
+    | select(.direction == "Output" and .available != "no")
+    | {card: $device.props["device.name"], port: .name}
+  ]
+')
+
+timeout 2 pactl -f json list cards 2>/dev/null | jq -c --argjson output_ports "$output_ports" '
+  def inputs: split("+") | map(select(startswith("input:"))) | sort;
   [ .[]
     | . as $card
     | (.ports // {} | to_entries[]) as $port
+    | select(any($output_ports[]; .card == $card.name and .port == $port.key))
     | select(($port.value.availability // "unknown") != "not available")
     | [($port.value.profiles // [])[] as $profile_name
         | ($card.profiles[$profile_name] // {}) as $profile
         | select(($profile.sinks // 0) == 1)
-        | select(($profile.available // true) != false)
+        | select($profile.available != false)
         | select($profile_name | startswith("output:"))
         | {
             cardName: $card.name,
             profileName: $profile_name,
             label: ($port.value.properties["device.product.name"] // $port.value.description // $profile.description // $profile_name),
             description: ($profile.description // $port.value.description // $profile_name),
-            priority: (($profile.priority // 0) + ($port.value.priority // 0))
+            priority: (($profile.priority // 0) + ($port.value.priority // 0)),
+            preservesInput: (($profile_name | inputs) == (($card.active_profile // "") | inputs))
           }
       ]
     | select(length > 0)
-    | max_by(.priority)
+    | max_by([.preservesInput, .priority])
   ]
-  | unique_by(.cardName + "|" + .profileName)
+  | group_by(.cardName + "|" + .profileName)
+  | map(max_by(.priority))
   | sort_by(-.priority)
-  | map(del(.priority))
+  | map(del(.priority, .preservesInput))
 '

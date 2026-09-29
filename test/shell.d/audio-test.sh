@@ -50,6 +50,25 @@ const reorderedRows = audio.outputRows([{ ...activeSink, name: 'alsa_output.gpu.
 ])
 assertEqual(reorderedRows[0].label, 'Left Monitor', 'audio keeps output rows sorted when the active profile changes')
 assertEqual(reorderedRows[1].label, 'Right Monitor', 'audio does not move the selected output to the front')
+const duplexProfiles = [
+  { cardName: 'alsa_card.pch', profileName: 'output:hdmi-stereo+input:analog-stereo', label: 'TV' }
+]
+assertEqual(
+  audio.outputProfileSinkName('alsa_card.pch', duplexProfiles[0].profileName),
+  'alsa_output.pch.hdmi-stereo',
+  'audio derives the output mapping independently of the microphone profile'
+)
+for (const ready of [false, true]) {
+  const duplexSink = {
+    name: 'alsa_output.pch.hdmi-stereo', ready,
+    properties: { 'device.name': 'alsa_card.pch', 'device.profile.name': 'hdmi-stereo' }
+  }
+  const rows = audio.outputRows([duplexSink], duplexProfiles)
+  assertEqual(rows.length, 1, `audio deduplicates duplex output with node ready=${ready}`)
+  assertEqual(rows[0].label, 'TV', 'audio retains the monitor label for a duplex profile')
+}
+assertEqual(audio.outputProfileSinkName('alsa_card.pch', 'input:analog-stereo'), '', 'audio rejects input-only sink names')
+assertEqual(audio.outputProfileSinkName('alsa_card.pch', 'output:analog-stereo+output:hdmi-stereo'), '', 'audio rejects ambiguous multi-output sink names')
 assertEqual(audio.friendlyDeviceLabel('Built-in Audio Speakers Output'), 'Speakers', 'audio cleans device labels')
 assertEqual(
   audio.nodeLabel({ ready: true, properties: { 'node.nick': 'Built-in Audio Microphones Input' }, name: 'alsa_input' }),

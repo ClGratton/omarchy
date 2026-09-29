@@ -58,7 +58,8 @@ cat >"$sinks" <<'JSON'
     "name": "alsa_output.gpu.hdmi-stereo-extra1",
     "properties": {
       "device.name": "alsa_card.gpu",
-      "device.profile.name": "hdmi-stereo-extra1"
+      "device.profile.name": "hdmi-stereo-extra1",
+      "object.id": "73"
     }
   }
 ]
@@ -73,6 +74,8 @@ elif [[ $1 == "-f" && $2 == "json" && $3 == "list" && $4 == "sinks" ]]; then
   cat "$SINKS_FIXTURE"
 elif [[ $1 == "set-card-profile" ]]; then
   printf 'set-card-profile\t%s\t%s\n' "$2" "$3" >>"$CALL_LOG"
+elif [[ $1 == "get-default-sink" ]]; then
+  echo alsa_output.gpu.hdmi-stereo-extra1
 else
   exit 1
 fi
@@ -84,7 +87,19 @@ cat >"$stub_bin/omarchy-audio-output-set-default" <<'SH'
 printf 'set-default\t%s\t%s\n' "$1" "$2" >>"$CALL_LOG"
 SH
 
-chmod +x "$stub_bin/pactl" "$stub_bin/omarchy-audio-output-set-default"
+cat >"$stub_bin/pw-dump" <<'SH'
+#!/bin/bash
+cat <<'JSON'
+[{"type":"PipeWire:Interface:Device","info":{"props":{"device.name":"alsa_card.gpu"},"params":{"EnumRoute":[
+  {"name":"hdmi-output-0","direction":"Output","available":"yes"},
+  {"name":"hdmi-output-1","direction":"Output","available":"yes"},
+  {"name":"hdmi-output-2","direction":"Output","available":"no"}
+]}}}]
+JSON
+SH
+
+chmod +x "$stub_bin/pactl" "$stub_bin/pw-dump" "$stub_bin/omarchy-audio-output-set-default"
+export PATH="$stub_bin:$ROOT/bin:$PATH"
 
 profiles=$(CARDS_FIXTURE="$cards" PATH="$stub_bin:$PATH" "$ROOT/bin/omarchy-audio-output-profiles")
 if jq -e '
@@ -106,7 +121,7 @@ else
   fail "audio output profile selection activates the requested card profile"
 fi
 
-if rg -F $'set-default\t731\talsa_output.gpu.hdmi-stereo-extra1' "$calls" >/dev/null; then
+if rg -F $'set-default\t73\talsa_output.gpu.hdmi-stereo-extra1' "$calls" >/dev/null; then
   pass "audio output profile selection promotes the recreated sink"
 else
   fail "audio output profile selection promotes the recreated sink"

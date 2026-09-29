@@ -14,14 +14,12 @@ if [[ -z $card_name || -z $profile_name ]]; then
   exit 1
 fi
 
-cards=$(timeout 2 pactl -f json list cards 2>/dev/null)
+# Recheck the available playback routes: the panel may still show a monitor
+# that was disconnected since its last refresh.
+profiles=$(timeout 5 omarchy-audio-output-profiles)
 if ! jq -e --arg card "$card_name" --arg profile "$profile_name" '
-  any(.[];
-    .name == $card
-    and (.profiles[$profile].sinks // 0) > 0
-    and (.profiles[$profile].available // true) != false
-    and ($profile | startswith("output:")))
-' <<<"$cards" >/dev/null; then
+  any(.[]; .cardName == $card and .profileName == $profile)
+' <<<"$profiles" >/dev/null; then
   echo "Audio output profile is unavailable: $card_name $profile_name" >&2
   exit 1
 fi
@@ -29,18 +27,31 @@ fi
 timeout 2 pactl set-card-profile "$card_name" "$profile_name"
 
 profile_device=${profile_name#output:}
-for _ in {1..20}; do
-  sink=$(timeout 2 pactl -f json list sinks 2>/dev/null | jq -c --arg card "$card_name" --arg profile "$profile_device" '
+# The full duplex profile is needed above to retain microphone capture, but
+# the resulting sink identifies only its output mapping.
+profile_device=${profile_device%%+*}
+deadline=$((SECONDS + 3))
+while (( SECONDS < deadline )); do
+  sinks=$(timeout 1 pactl -f json list sinks 2>/dev/null) || break
+  sink=$(jq -c --arg card "$card_name" --arg profile "$profile_device" '
     first(.[]
       | select(.properties["device.name"] == $card)
-      | select(.properties["device.profile.name"] == $profile)) // empty
-  ')
+      | select(.properties["device.profile.name"] == $profile)
+      | select((.ports | length) == 0 or any(.ports[]; .availability != "not available"))) // empty
+  ' <<<"$sinks")
   if [[ -n $sink ]]; then
-    omarchy-audio-output-set-default "$(jq -r '.index' <<<"$sink")" "$(jq -r '.name' <<<"$sink")"
-    exit 0
+    sink_name=$(jq -r '.name' <<<"$sink")
+    # wpctl needs the PipeWire object id, not PulseAudio compatibility index.
+    node_id=$(jq -r '.properties["object.id"]' <<<"$sink")
+    omarchy-audio-output-set-default "$node_id" "$sink_name"
+    if [[ $(timeout 1 pactl get-default-sink) == "$sink_name" ]]; then
+      exit 0
+    else
+      break
+    fi
   fi
   sleep 0.1
 done
 
-echo "Audio sink did not appear for profile: $card_name $profile_name" >&2
+echo "Could not select an available audio output: $card_name $profile_name" >&2
 exit 1
