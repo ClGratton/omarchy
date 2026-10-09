@@ -9,9 +9,59 @@ const fs = require('fs')
 const notifications = requireFromRoot('shell/plugins/notifications/NotificationLogic.js')
 const screensaverServiceQml = fs.readFileSync(path.join(root, 'shell/plugins/notifications/Service.qml'), 'utf8')
 
+// Toasts are Overlay-layer surfaces, so the compositor draws them over the
+// screensaver unless they are hidden. What hides them is whether a screensaver
+// toplevel is mapped, not the idle service's per-cycle window count, which
+// startIdleCycle(), cancelIdleCycle() and lockSystem() reset while the windows
+// are still up and which is empty after a shell restart.
+const screensaverToplevel = appId => ({ appId: appId })
+const toplevelModel = (...toplevels) => ({ values: toplevels })
+
 assert(
-  /resolveEnabledId\("omarchy\.idle"\)/.test(screensaverServiceQml),
-  'notifications follow the enabled idle service, including a user clone'
+  notifications.hasScreensaverToplevel([screensaverToplevel('org.omarchy.screensaver')]),
+  'a mapped screensaver toplevel hides the toasts'
+)
+assert(
+  notifications.hasScreensaverToplevel(toplevelModel(screensaverToplevel('foot'), screensaverToplevel('org.omarchy.screensaver'))),
+  'the toplevels arrive as an ObjectModel, and the screensaver is found among other windows'
+)
+assert(
+  notifications.hasScreensaverToplevel(toplevelModel(screensaverToplevel('org.omarchy.screensaver'), screensaverToplevel('org.omarchy.screensaver'))),
+  'one screensaver window per output is still one hidden state'
+)
+// The decision follows the windows that exist, whatever launched them or when:
+// the same model answers differently as a window maps and closes.
+const liveWindows = toplevelModel(screensaverToplevel('foot'))
+assert(!notifications.hasScreensaverToplevel(liveWindows), 'toasts show before a screensaver window maps')
+liveWindows.values.push(screensaverToplevel('org.omarchy.screensaver'))
+assert(notifications.hasScreensaverToplevel(liveWindows), 'toasts hide once a screensaver window maps, however it was launched')
+liveWindows.values.pop()
+assert(!notifications.hasScreensaverToplevel(liveWindows), 'toasts come back once the screensaver window closes')
+assert(
+  !notifications.hasScreensaverToplevel(toplevelModel(screensaverToplevel('foot'), screensaverToplevel('mpv'), screensaverToplevel(''))),
+  'other windows hide nothing'
+)
+assert(
+  !notifications.hasScreensaverToplevel(toplevelModel(screensaverToplevel('org.omarchy.screensaver.other'), screensaverToplevel('Org.Omarchy.Screensaver'))),
+  'only the exact screensaver app id counts'
+)
+assert(
+  !notifications.hasScreensaverToplevel(toplevelModel(null, {}, screensaverToplevel(undefined))),
+  'a toplevel with no app id hides nothing'
+)
+assert(!notifications.hasScreensaverToplevel(toplevelModel()), 'no windows hide nothing')
+assert(!notifications.hasScreensaverToplevel([]), 'an empty window list hides nothing')
+assert(!notifications.hasScreensaverToplevel({}), 'a model with no values hides nothing')
+assert(!notifications.hasScreensaverToplevel(null), 'a missing toplevel model hides nothing')
+assert(!notifications.hasScreensaverToplevel(undefined), 'an unset toplevel model hides nothing')
+
+assert(
+  /screensaverActive: NotificationLogic\.hasScreensaverToplevel\(ToplevelManager\.toplevels\)/.test(screensaverServiceQml),
+  'the screensaver state is read from the mapped toplevels'
+)
+assert(
+  !/screensaverWindowCount|idleService|resolveEnabledId|pluginRegistry/.test(screensaverServiceQml),
+  'notifications do not depend on the idle service, so a user clone of either still works'
 )
 assert(
   /visible:\s*popupModel\.count\s*>\s*0\s*&&\s*!service\.screensaverActive/.test(screensaverServiceQml),

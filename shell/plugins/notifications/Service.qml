@@ -18,14 +18,14 @@ Item {
   property var shell: null
 
   // Notification popups are layer-shell overlays, while the fullscreen
-  // screensaver is a normal Wayland client. Hide the overlays whenever the
-  // enabled idle service reports a screensaver window. Resolve through the
-  // registry so this also follows a user-cloned idle service.
-  readonly property string idleServiceId: shell && shell.pluginRegistry
-    ? shell.pluginRegistry.resolveEnabledId("omarchy.idle")
-    : "omarchy.idle"
-  readonly property var idleService: shell ? shell.serviceFor(idleServiceId) : null
-  readonly property bool screensaverActive: !!idleService && idleService.screensaverWindowCount > 0
+  // screensaver is a normal Wayland client, so the compositor draws toasts over
+  // it. Hide the overlays for as long as a screensaver window is mapped. This
+  // reads the toplevels themselves rather than the idle service's per-cycle
+  // window count: that count is reset when an idle cycle starts or is cancelled
+  // and is empty after a shell restart, so it misses a screensaver launched
+  // from the menu or already running. A toplevel check also needs nothing from
+  // another plugin, which a user clone of this service is not handed.
+  readonly property bool screensaverActive: NotificationLogic.hasScreensaverToplevel(ToplevelManager.toplevels)
 
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
   readonly property string home: Quickshell.env("HOME")
