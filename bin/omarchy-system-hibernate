@@ -37,14 +37,63 @@ if ! flock -n "$marker_fd"; then
   exec systemctl hibernate
 fi
 
+# logind answers the hibernate request right after it emits
+# PrepareForSleep(true), so `systemctl hibernate` can return while the sleep
+# monitor is still checking the marker. Keep holding it until logind emits
+# PrepareForSleep(false), after resume or when the hibernate fails. The watch
+# starts before the request so that signal cannot slip past.
+sleep_events_fd=
+sleep_events_pid=
+start_sleep_watch() {
+  coproc SLEEP_EVENTS {
+    exec dbus-monitor --system \
+      "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"
+  }
+  sleep_events_fd=${SLEEP_EVENTS[0]:-}
+  sleep_events_pid=${SLEEP_EVENTS_PID:-}
+
+  # dbus-monitor prints the bus's NameAcquired greeting only once its match is
+  # in place.
+  if [[ -n $sleep_events_fd ]]; then
+    IFS= read -r -t 2 _ 2>/dev/null <&"$sleep_events_fd" || true
+  fi
+}
+
+# A watch that died ends the wait at once, which falls back to releasing the
+# marker when the request returns. The timeout only bounds a wait that never
+# sees the signal.
+wait_for_sleep_end() {
+  local line
+  [[ -n $sleep_events_fd ]] || return 1
+  while IFS= read -r -t 60 line 2>/dev/null <&"$sleep_events_fd"; do
+    if [[ $line == *"boolean false"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 cleanup_marker() {
+  if [[ -n $sleep_events_pid ]]; then
+    kill "$sleep_events_pid" 2>/dev/null || true
+    wait "$sleep_events_pid" 2>/dev/null || true
+  fi
   flock -u "$marker_fd" 2>/dev/null || true
   rm -f -- "$marker"
 }
 trap cleanup_marker EXIT INT TERM
 
+start_sleep_watch
+
 log_hibernate_path "boot-auth=interactive marker=held action=hibernate"
 systemctl hibernate
 status=$?
+if (( status == 0 )); then
+  if wait_for_sleep_end; then
+    log_hibernate_path "boot-auth=interactive marker=held sleep=ended"
+  else
+    log_hibernate_path "boot-auth=interactive marker=held sleep=unconfirmed"
+  fi
+fi
 log_hibernate_path "boot-auth=interactive marker=releasing hibernate-status=$status"
 exit "$status"
