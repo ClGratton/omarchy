@@ -20,8 +20,12 @@ consume_sleep_events() {
   done
 }
 
+# The marker is taken before the hibernate request, so a suspend that starts
+# in that gap would also find it held. Only skip the lock when logind confirms
+# the sleep in progress is a hibernate (ScheduledShutdown names the operation
+# while PreparingForSleep is true).
 hibernate_boot_auth_active() {
-  local marker marker_fd lock_status
+  local marker marker_fd lock_status state
   [[ -n ${XDG_RUNTIME_DIR:-} ]] || return 1
   marker="$XDG_RUNTIME_DIR/omarchy-hibernate-boot-auth.lock"
   [[ -f $marker ]] || return 1
@@ -30,8 +34,11 @@ hibernate_boot_auth_active() {
   flock -n -E 75 "$marker_fd" 2>/dev/null
   lock_status=$?
   exec {marker_fd}>&-
+  (( lock_status == 75 )) || return 1
 
-  (( lock_status == 75 ))
+  state=$(timeout 2 busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager PreparingForSleep ScheduledShutdown 2>/dev/null) || return 1
+  [[ $state == $'b true\n(st) "hibernate" '* ]]
 }
 
 monitor_sleep_events() {
