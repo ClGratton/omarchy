@@ -11,6 +11,7 @@ mock_bin="$test_tmp/bin"
 runtime_dir="$test_tmp/runtime"
 call_log="$test_tmp/calls"
 request_file="$test_tmp/requested"
+slept_file="$test_tmp/slept"
 marker="$runtime_dir/omarchy-hibernate-boot-auth.lock"
 mkdir -p "$mock_bin" "$runtime_dir"
 
@@ -71,16 +72,44 @@ if [[ -f $marker ]]; then
 fi
 printf 'preparing marker=%s\n' "$marker_state" >>"$CALL_LOG"
 
+# A watch that inherited the marker would keep it locked after the hibernate
+# command was killed, and the next suspend would skip its lock.
+inherited=no
+for fd in /proc/self/fd/*; do
+  [[ $(readlink "$fd" 2>/dev/null) == "$marker" ]] && inherited=yes
+done
+printf 'watch inherited marker=%s\n' "$inherited" >>"$CALL_LOG"
+
+# The machine only spends time asleep when the hibernate really happens.
+(( ${SLEEP_SECONDS:-0} == 0 )) || echo $((SLEPT_BEFORE + SLEEP_SECONDS)) >"$SLEPT_FILE"
 printf '   boolean false\n'
 exec sleep 30
 SH
-chmod +x "$mock_bin/omarchy-hibernation-boot-auth" "$mock_bin/systemctl" "$mock_bin/dbus-monitor"
+
+# The asleep-time reading: CLOCK_BOOTTIME minus CLOCK_MONOTONIC, in seconds.
+cat >"$mock_bin/python3" <<'SH'
+#!/bin/bash
+
+[[ ${SLEPT_UNREADABLE:-} != yes ]] || exit 1
+cat "$SLEPT_FILE"
+SH
+
+for command in omarchy-system-lock omarchy-hyprland-monitor-clamshell; do
+  cat >"$mock_bin/$command" <<SH
+#!/bin/bash
+
+echo $command >>"\$CALL_LOG"
+SH
+done
+chmod +x "$mock_bin"/*
 
 run_hibernate() {
   : >"$call_log"
   rm -f "$request_file"
+  echo 1000 >"$slept_file"
   set +e
-  BOOT_AUTH_STATUS="$1" SYSTEMCTL_STATUS="${2:-0}" \
+  BOOT_AUTH_STATUS="$1" SYSTEMCTL_STATUS="${2:-0}" SLEPT_BEFORE=1000 SLEPT_FILE="$slept_file" \
+    SLEEP_SECONDS="${SLEEP_SECONDS-3600}" \
     XDG_RUNTIME_DIR="$runtime_dir" CALL_LOG="$call_log" REQUEST_FILE="$request_file" \
     PATH="$mock_bin:$PATH" \
     "$ROOT/bin/omarchy-system-hibernate"
@@ -102,6 +131,37 @@ pass "encrypted hibernate holds its marker until PrepareForSleep(false)"
 [[ ! -e $marker ]] || fail "encrypted hibernate cleans its marker after resume"
 pass "encrypted hibernate cleans its marker after resume"
 
+grep -Fx 'watch inherited marker=no' "$call_log" >/dev/null ||
+  fail "the signal watch does not inherit the marker" "$(<"$call_log")"
+pass "the signal watch does not inherit the marker"
+
+# The user authenticated at the LUKS prompt, so a real resume must not lock.
+! grep -E '^omarchy-(system-lock|hyprland-monitor-clamshell)$' "$call_log" >/dev/null ||
+  fail "a hibernate that slept does not lock after resume" "$(<"$call_log")"
+pass "a hibernate that slept does not lock after resume"
+
+# PrepareForSleep(false) with no time asleep means the hibernate failed or was
+# cancelled after its session lock was skipped; nobody authenticated.
+SLEEP_SECONDS=0 run_hibernate 0
+grep -Fx 'omarchy-system-lock' "$call_log" >/dev/null ||
+  fail "a hibernate that never slept locks the session" "$(<"$call_log")"
+grep -Fx 'omarchy-hyprland-monitor-clamshell' "$call_log" >/dev/null ||
+  fail "a hibernate that never slept reconciles the displays the lid handler skipped" "$(<"$call_log")"
+[[ ! -e $marker ]] || fail "a failed hibernate cleans its marker"
+pass "a hibernate that never slept locks the session"
+
+# A few seconds of wall time is not a boot and a LUKS prompt.
+SLEEP_SECONDS=2 run_hibernate 0
+grep -Fx 'omarchy-system-lock' "$call_log" >/dev/null ||
+  fail "a hibernate that barely slept locks the session" "$(<"$call_log")"
+pass "a hibernate that barely slept locks the session"
+
+# If the time asleep cannot be read, the safe answer is the lock.
+SLEPT_UNREADABLE=yes run_hibernate 0
+grep -Fx 'omarchy-system-lock' "$call_log" >/dev/null ||
+  fail "an unreadable sleep clock locks the session" "$(<"$call_log")"
+pass "an unreadable sleep clock locks the session"
+
 # Without a working signal watch the marker goes when the request returns, as
 # it did before the watch existed, instead of waiting out the timeout.
 start_us=${EPOCHREALTIME//[!0-9]/}
@@ -110,6 +170,10 @@ elapsed_us=$((10#${EPOCHREALTIME//[!0-9]/} - 10#$start_us))
 (( hibernate_status == 0 && elapsed_us < 5000000 )) ||
   fail "hibernate without a signal watch releases its marker at once" "exit: $hibernate_status, elapsed: ${elapsed_us}us"
 [[ ! -e $marker ]] || fail "hibernate without a signal watch cleans its marker"
+# Nothing says whether the hibernate is still being entered, and a lock coming
+# up then is what keeps some machines from powering off.
+! grep -x 'omarchy-system-lock' "$call_log" >/dev/null ||
+  fail "hibernate without a signal watch does not lock" "$(<"$call_log")"
 pass "hibernate without a signal watch releases its marker at once"
 
 run_hibernate 1
@@ -120,5 +184,7 @@ pass "unencrypted hibernate leaves session locking enabled"
 run_hibernate 0 42
 (( hibernate_status == 42 )) ||
   fail "hibernate propagates a failed system request" "exit: $hibernate_status"
+! grep -x 'omarchy-system-lock' "$call_log" >/dev/null ||
+  fail "a refused hibernate request does not lock" "$(<"$call_log")"
 [[ ! -e $marker ]] || fail "failed hibernate cleans its boot-auth marker"
 pass "failed hibernate cleans its boot-auth marker"

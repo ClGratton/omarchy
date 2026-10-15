@@ -45,9 +45,13 @@ fi
 sleep_events_fd=
 sleep_events_pid=
 start_sleep_watch() {
+  # The watch must not inherit the marker: a lock lives as long as any process
+  # holds the open file, so a watch outliving a killed hibernate command would
+  # keep the marker held and make the monitor skip the lock for the next suspend.
   coproc SLEEP_EVENTS {
     exec dbus-monitor --system \
-      "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"
+      "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'" \
+      {marker_fd}>&-
   }
   sleep_events_fd=${SLEEP_EVENTS[0]:-}
   sleep_events_pid=${SLEEP_EVENTS_PID:-}
@@ -59,18 +63,48 @@ start_sleep_watch() {
   fi
 }
 
-# A watch that died ends the wait at once, which falls back to releasing the
-# marker when the request returns. The timeout only bounds a wait that never
-# sees the signal.
+# Returns 0 once logind reports the sleep is over, 1 when there is no working
+# watch (it never started or died), 2 when no signal arrived within a minute.
+# A frozen process does not run its timeout, so a hibernate that is really
+# happening cannot reach 2: that means the machine is awake and nothing is
+# being written.
 wait_for_sleep_end() {
-  local line
+  local line status
   [[ -n $sleep_events_fd ]] || return 1
-  while IFS= read -r -t 60 line 2>/dev/null <&"$sleep_events_fd"; do
-    if [[ $line == *"boolean false"* ]]; then
-      return 0
-    fi
+  while true; do
+    IFS= read -r -t 60 line 2>/dev/null <&"$sleep_events_fd"
+    status=$?
+    (( status == 0 )) || break
+    [[ $line == *"boolean false"* ]] && return 0
   done
+  (( status > 128 )) && return 2
   return 1
+}
+
+# Seconds the machine has spent asleep since boot: CLOCK_BOOTTIME runs through
+# a suspend or hibernation and CLOCK_MONOTONIC stops, so the difference only
+# grows across a real sleep. Prints nothing when it cannot be read.
+slept_seconds() {
+  python3 -c 'import time; print(int(time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()))' 2>/dev/null
+}
+
+# Reaching here after PrepareForSleep(false) with no sleep in between means the
+# hibernate failed or was cancelled after the session lock had been skipped, and
+# nothing authenticated anyone. Lock now. A successful hibernate always spends
+# at least the boot and LUKS prompt asleep; if that cannot be shown, locking is
+# the safe answer.
+lock_unless_slept() {
+  local before=$1 after
+  after=$(slept_seconds)
+  if [[ $before =~ ^[0-9]+$ && $after =~ ^[0-9]+$ ]] && (( after - before >= 5 )); then
+    log_hibernate_path "boot-auth=interactive marker=held resumed=true"
+    return 0
+  fi
+
+  log_hibernate_path "boot-auth=interactive marker=held resumed=false action=lock"
+  omarchy-system-lock >/dev/null 2>&1 || true
+  # The lid handler also skipped reconciling the displays for this attempt.
+  omarchy-hyprland-monitor-clamshell >/dev/null 2>&1 || true
 }
 
 cleanup_marker() {
@@ -84,16 +118,21 @@ cleanup_marker() {
 trap cleanup_marker EXIT INT TERM
 
 start_sleep_watch
+slept_before=$(slept_seconds)
 
 log_hibernate_path "boot-auth=interactive marker=held action=hibernate"
 systemctl hibernate
 status=$?
 if (( status == 0 )); then
-  if wait_for_sleep_end; then
-    log_hibernate_path "boot-auth=interactive marker=held sleep=ended"
-  else
-    log_hibernate_path "boot-auth=interactive marker=held sleep=unconfirmed"
-  fi
+  wait_for_sleep_end
+  case $? in
+    0) lock_unless_slept "$slept_before" ;;
+    # No watch to learn the outcome from, so it cannot be told from a hibernate
+    # still being entered. Locking now would be that late lock.
+    1) log_hibernate_path "boot-auth=interactive marker=held sleep=unwatched" ;;
+    *) log_hibernate_path "boot-auth=interactive marker=held sleep=unconfirmed"
+       lock_unless_slept "$slept_before" ;;
+  esac
 fi
 log_hibernate_path "boot-auth=interactive marker=releasing hibernate-status=$status"
 exit "$status"
