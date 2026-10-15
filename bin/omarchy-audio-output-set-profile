@@ -14,7 +14,7 @@ if [[ -z $card_name || -z $profile_name ]]; then
   exit 1
 fi
 
-cards=$(timeout 2 pactl -f json list cards 2>/dev/null)
+cards=$(LC_ALL=C timeout 2 pactl -f json list cards 2>/dev/null)
 if ! jq -e --arg card "$card_name" --arg profile "$profile_name" '
   any(.[];
     .name == $card
@@ -33,7 +33,7 @@ timeout 2 pactl set-card-profile "$card_name" "$profile_name"
 output_mapping=${profile_name#output:}
 output_mapping=${output_mapping%%+*}
 for _ in {1..20}; do
-  sinks=$(timeout 2 pactl -f json list sinks 2>/dev/null)
+  sinks=$(LC_ALL=C timeout 2 pactl -f json list sinks 2>/dev/null)
   sink=$(jq -c --arg card "$card_name" --arg profile "$output_mapping" '
     first(.[]
       | select(.properties["device.name"] == $card)

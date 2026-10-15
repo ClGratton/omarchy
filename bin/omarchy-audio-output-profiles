@@ -9,7 +9,8 @@ set -euo pipefail
 # profile without sinks, so skip those before a microphone labels an output.
 # Duplex profiles such as output:hdmi-stereo+input:analog-stereo share one sink
 # with their output-only twin, so keep one profile per output mapping.
-timeout 2 pactl -f json list cards 2>/dev/null | jq -c '
+# pactl translates port availability in its JSON too; read it in the C locale.
+LC_ALL=C timeout 2 pactl -f json list cards 2>/dev/null | jq -c '
   [ .[]
     | . as $card
     | (.ports // {} | to_entries[]) as $port
