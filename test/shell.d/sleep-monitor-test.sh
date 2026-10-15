@@ -87,6 +87,16 @@ for _ in {1..100}; do
 done
 [[ -e $boot_auth_ready ]] || fail "sleep monitor test acquires the hibernate marker"
 
+mock_logind() {
+  local preparing="$1" operation="$2"
+  cat >"$mock_bin/busctl" <<SH
+#!/bin/bash
+printf 'b %s\\n(st) "%s" 1791700000000000\\n' "$preparing" "$operation"
+SH
+  chmod +x "$mock_bin/busctl"
+}
+
+mock_logind true hibernate
 OMARCHY_PATH="$mock_omarchy" \
   XDG_RUNTIME_DIR="$runtime_dir" \
   PATH="$mock_bin:$PATH" \
@@ -97,6 +107,21 @@ OMARCHY_PATH="$mock_omarchy" \
 (( $(wc -l <"$lock_log") == 1 )) ||
   fail "sleep monitor accepts interactive boot authentication for hibernate"
 pass "sleep monitor accepts interactive boot authentication for hibernate"
+
+# The marker is taken before the hibernate request, so a suspend that starts
+# in between must still lock.
+mock_logind true suspend
+OMARCHY_PATH="$mock_omarchy" \
+  XDG_RUNTIME_DIR="$runtime_dir" \
+  PATH="$mock_bin:$PATH" \
+  PRODUCER_PID_FILE="$producer_pid_file" \
+  LOCK_LOG="$lock_log" \
+  "$sleep_monitor"
+
+(( $(wc -l <"$lock_log") == 2 )) ||
+  fail "sleep monitor locks a suspend that starts while the hibernate marker is held"
+pass "sleep monitor locks a suspend that starts while the hibernate marker is held"
+mock_logind true hibernate
 
 kill "$boot_auth_pid" 2>/dev/null || true
 wait "$boot_auth_pid" 2>/dev/null || true
@@ -110,7 +135,7 @@ OMARCHY_PATH="$mock_omarchy" \
   LOCK_LOG="$lock_log" \
   "$sleep_monitor"
 
-(( $(wc -l <"$lock_log") == 2 )) ||
+(( $(wc -l <"$lock_log") == 3 )) ||
   fail "sleep monitor ignores a stale hibernate marker"
 pass "sleep monitor ignores a stale hibernate marker"
 
