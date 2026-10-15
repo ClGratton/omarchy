@@ -118,6 +118,16 @@ const tunedRows = audio.outputRows([tuningSink], tunedProfiles, [tuningSink, spe
 assertEqual(tunedRows.length, 2, 'audio does not offer the speaker profile beside an active speaker tuning')
 assertEqual(tunedRows.filter((row) => row.kind === 'profile').map((row) => row.label).join(','), 'DELL U2720Q', 'audio still offers the other outputs while a speaker tuning is active')
 assertEqual(audio.outputRows([tuningSink], tunedProfiles).length, 3, 'audio offers the speaker profile when no hidden sink uses it')
+// The panel's Repeater holds primitives only, never the live PipeWire node.
+const outputSnapshot = audio.outputRowSnapshot(audio.outputRows([{ ...duplexSink, id: 56 }], duplexProfiles))
+assertDeepEqual(
+  outputSnapshot,
+  [
+    { id: 56, name: 'alsa_output.pci-0000_00_1f.3.hdmi-stereo', kind: 'sink', label: 'DELL U2720Q', description: 'Digital Stereo (HDMI) Output + Analog Stereo Input' },
+    { kind: 'profile', cardName: 'alsa_card.pci-0000_00_1f.3', profileName: 'output:analog-stereo+input:analog-stereo', label: 'Speakers', description: 'Analog Stereo Duplex' }
+  ],
+  'audio snapshots output rows to primitives'
+)
 assertEqual(audio.friendlyDeviceLabel('Built-in Audio Speakers Output'), 'Speakers', 'audio cleans device labels')
 assertEqual(
   audio.nodeLabel({ ready: true, properties: { 'node.nick': 'Built-in Audio Microphones Input' }, name: 'alsa_input' }),
