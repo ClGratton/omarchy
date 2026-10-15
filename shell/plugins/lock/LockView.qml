@@ -274,7 +274,7 @@ Item {
       anchors.top: inputField.bottom
       anchors.topMargin: 18
       anchors.horizontalCenter: inputField.horizontalCenter
-      visible: root.fingerprintConfigured && root.fingerprintUnavailable
+      visible: root.fingerprintConfigured && root.fingerprintUnavailable && !root.concealAuthentication
       text: Commons.I18n.t("lock.fingerprintUnavailable")
       color: Commons.Color.lock.textError
       font.family: Style.font.family
