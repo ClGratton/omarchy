@@ -108,7 +108,9 @@ Panel {
     return list
   }
 
-  readonly property var rawAudioOutputs: Model.outputRows(rawAudioSinks, outputProfiles)
+  // candidateSinks also covers sinks the list hides, like the physical speakers a
+  // tuning fronts, so their card profile is not offered as a second row.
+  readonly property var rawAudioOutputs: Model.outputRows(rawAudioSinks, outputProfiles, candidateSinks)
   readonly property var audioOutputs: rawAudioOutputs.length > 0 ? rawAudioOutputs : cachedAudioOutputs
   readonly property var audioSources: rawAudioSources.length > 0 ? rawAudioSources : cachedAudioSources
 

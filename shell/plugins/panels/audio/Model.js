@@ -130,13 +130,17 @@ function sinkProfileKey(node) {
   return outputProfileKey(cardName, profileName)
 }
 
-function outputRows(sinks, profiles) {
+// Sinks that exist in the graph but are kept out of the list, such as the physical
+// sink a speaker tuning fronts, still count as active: their profile is already
+// in use, so offering it again would only duplicate the tuning's own row.
+function outputRows(sinks, profiles, hiddenSinks) {
   var rows = []
   var activeProfiles = {}
   var profilesByKey = {}
   var profilesBySinkName = {}
   var sinkValues = Array.isArray(sinks) ? sinks : []
   var profileValues = Array.isArray(profiles) ? profiles : []
+  var hiddenValues = Array.isArray(hiddenSinks) ? hiddenSinks : []
 
   for (var i = 0; i < profileValues.length; i++) {
     var availableProfile = profileValues[i]
@@ -160,6 +164,15 @@ function outputRows(sinks, profiles) {
     })
   }
 
+  for (var h = 0; h < hiddenValues.length; h++) {
+    var hiddenNode = hiddenValues[h]
+    var hiddenProfile = profilesBySinkName[String(hiddenNode && hiddenNode.name || "")]
+    var hiddenKey = hiddenProfile
+      ? outputProfileKey(hiddenProfile.cardName, hiddenProfile.profileName)
+      : sinkProfileKey(hiddenNode)
+    if (hiddenKey) activeProfiles[hiddenKey] = true
+  }
+
   for (var k = 0; k < profileValues.length; k++) {
     var inactiveProfile = profileValues[k]
     var key = outputProfileKey(inactiveProfile.cardName, inactiveProfile.profileName)
@@ -173,10 +186,17 @@ function outputRows(sinks, profiles) {
     })
   }
 
+  // Order by label, then by the sink the row stands for. A profile row and the
+  // sink it turns into share that key, so activating an output never moves it,
+  // even between outputs with identical labels or when the graph lists sinks in a
+  // different order.
   return rows.sort(function(a, b) {
     var left = String(a && a.label || "")
     var right = String(b && b.label || "")
-    return left < right ? -1 : left > right ? 1 : 0
+    if (left !== right) return left < right ? -1 : 1
+    var leftKey = outputRowKey(a)
+    var rightKey = outputRowKey(b)
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
   })
 }
 
@@ -207,6 +227,13 @@ function outputRowSnapshot(rows) {
     }
   }
   return snapshot
+}
+
+function outputRowKey(row) {
+  if (!row) return ""
+  if (row.kind === "profile")
+    return outputProfileSinkName(row.cardName, row.profileName) || String(row.cardName) + "|" + String(row.profileName)
+  return String(row.node && row.node.name || "")
 }
 
 function friendlyDeviceLabel(text) {

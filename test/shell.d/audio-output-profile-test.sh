@@ -71,6 +71,8 @@ if [[ $1 == "-f" && $2 == "json" && $3 == "list" && $4 == "cards" ]]; then
   cat "$CARDS_FIXTURE"
 elif [[ $1 == "-f" && $2 == "json" && $3 == "list" && $4 == "sinks" ]]; then
   cat "$SINKS_FIXTURE"
+elif [[ $1 == "list" && $2 == "sinks" && $3 == "short" ]]; then
+  jq -r '.[] | [.index, .name, "PipeWire", "s32le 2ch 48000Hz", "SUSPENDED"] | @tsv' "$SINKS_FIXTURE"
 elif [[ $1 == "set-card-profile" ]]; then
   printf 'set-card-profile\t%s\t%s\n' "$2" "$3" >>"$CALL_LOG"
 else
@@ -84,7 +86,21 @@ cat >"$stub_bin/omarchy-audio-output-set-default" <<'SH'
 printf 'set-default\t%s\t%s\n' "$1" "$2" >>"$CALL_LOG"
 SH
 
-chmod +x "$stub_bin/pactl" "$stub_bin/omarchy-audio-output-set-default"
+# Speaker tuning is off unless a case names the physical sink it fronts and the
+# tuning sink it exposes, so every other case also ignores the host's own tuning.
+cat >"$stub_bin/omarchy-audio-tuning" <<'SH'
+#!/bin/bash
+
+if [[ $1 == "fronted-sink" && -n ${TUNING_FRONTED:-} ]]; then
+  echo "$TUNING_FRONTED"
+elif [[ $1 == "sink" && -n ${TUNING_FRONTED:-} ]]; then
+  echo omarchy_speaker_tuning
+else
+  exit 1
+fi
+SH
+
+chmod +x "$stub_bin/pactl" "$stub_bin/omarchy-audio-output-set-default" "$stub_bin/omarchy-audio-tuning"
 
 profiles=$(CARDS_FIXTURE="$cards" PATH="$stub_bin:$PATH" "$ROOT/bin/omarchy-audio-output-profiles")
 if jq -e '
@@ -252,4 +268,90 @@ if rg -F $'set-default\t56\talsa_output.pci-0000_00_1f.3.hdmi-stereo' "$laptop_c
   pass "audio output profile selection promotes the duplex profile sink"
 else
   fail "audio output profile selection promotes the duplex profile sink"
+fi
+
+# Speaker tuning: a virtual sink in front of the laptop speakers. Selecting the
+# analog profile recreates the physical speaker sink, which the tuning fronts, so
+# the helper has to hand playback to the tuning sink or the EQ and limiter drop out.
+tuned_cards="$test_tmp/tuned-cards.json"
+tuned_sinks="$test_tmp/tuned-sinks.json"
+tuned_sinks_bare="$test_tmp/tuned-sinks-bare.json"
+tuned_sinks_hdmi="$test_tmp/tuned-sinks-hdmi.json"
+speaker_sink=alsa_output.pci-0000_00_1f.3.analog-stereo
+
+jq '.[0].active_profile = "output:analog-stereo+input:analog-stereo"' "$laptop_cards" >"$tuned_cards"
+
+cat >"$tuned_sinks_bare" <<'JSON'
+[
+  {
+    "index": 60,
+    "name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+    "properties": {
+      "device.name": "alsa_card.pci-0000_00_1f.3",
+      "device.profile.name": "analog-stereo"
+    }
+  }
+]
+JSON
+jq '. + [{ "index": 61, "name": "omarchy_speaker_tuning", "properties": {} }]' "$tuned_sinks_bare" >"$tuned_sinks"
+jq '. + [{ "index": 56, "name": "alsa_output.pci-0000_00_1f.3.hdmi-stereo", "properties": { "device.name": "alsa_card.pci-0000_00_1f.3", "device.profile.name": "hdmi-stereo" } }]' "$tuned_sinks" >"$tuned_sinks_hdmi"
+
+: >"$calls"
+CARDS_FIXTURE="$tuned_cards" SINKS_FIXTURE="$tuned_sinks" CALL_LOG="$calls" TUNING_FRONTED="$speaker_sink" PATH="$stub_bin:$PATH" \
+  "$ROOT/bin/omarchy-audio-output-set-profile" alsa_card.pci-0000_00_1f.3 output:analog-stereo+input:analog-stereo
+
+if rg -F $'set-default\t61\tomarchy_speaker_tuning' "$calls" >/dev/null && ! rg -F "$speaker_sink" "$calls" >/dev/null; then
+  pass "audio output profile selection routes a tuned speaker profile through the tuning sink"
+else
+  fail "audio output profile selection routes a tuned speaker profile through the tuning sink" "$(cat "$calls")"
+fi
+
+if rg -F $'set-card-profile\talsa_card.pci-0000_00_1f.3\toutput:analog-stereo+input:analog-stereo' "$calls" >/dev/null; then
+  pass "audio output profile selection still activates the full profile when tuned"
+else
+  fail "audio output profile selection still activates the full profile when tuned"
+fi
+
+: >"$calls"
+CARDS_FIXTURE="$tuned_cards" SINKS_FIXTURE="$tuned_sinks" CALL_LOG="$calls" PATH="$stub_bin:$PATH" \
+  "$ROOT/bin/omarchy-audio-output-set-profile" alsa_card.pci-0000_00_1f.3 output:analog-stereo+input:analog-stereo
+
+if rg -F $'set-default\t60\t'"$speaker_sink" "$calls" >/dev/null; then
+  pass "audio output profile selection uses the speaker sink when no tuning is active"
+else
+  fail "audio output profile selection uses the speaker sink when no tuning is active" "$(cat "$calls")"
+fi
+
+: >"$calls"
+CARDS_FIXTURE="$tuned_cards" SINKS_FIXTURE="$tuned_sinks_bare" CALL_LOG="$calls" TUNING_FRONTED="$speaker_sink" PATH="$stub_bin:$PATH" \
+  "$ROOT/bin/omarchy-audio-output-set-profile" alsa_card.pci-0000_00_1f.3 output:analog-stereo+input:analog-stereo
+
+if rg -F $'set-default\t60\t'"$speaker_sink" "$calls" >/dev/null; then
+  pass "audio output profile selection falls back to the speaker sink when the tuning sink is missing"
+else
+  fail "audio output profile selection falls back to the speaker sink when the tuning sink is missing" "$(cat "$calls")"
+fi
+
+# The tuning only fronts the speakers: an HDMI profile must still go to HDMI.
+: >"$calls"
+CARDS_FIXTURE="$laptop_cards" SINKS_FIXTURE="$tuned_sinks_hdmi" CALL_LOG="$calls" TUNING_FRONTED="$speaker_sink" PATH="$stub_bin:$PATH" \
+  "$ROOT/bin/omarchy-audio-output-set-profile" alsa_card.pci-0000_00_1f.3 output:hdmi-stereo+input:analog-stereo
+
+if rg -F $'set-default\t56\talsa_output.pci-0000_00_1f.3.hdmi-stereo' "$calls" >/dev/null; then
+  pass "audio output profile selection leaves non-tuned outputs alone"
+else
+  fail "audio output profile selection leaves non-tuned outputs alone" "$(cat "$calls")"
+fi
+
+# The tuning names its own sink only while it is in the graph.
+if [[ $(SINKS_FIXTURE="$tuned_sinks" OMARCHY_PATH="$ROOT" PATH="$stub_bin:$PATH" "$ROOT/bin/omarchy-audio-tuning" sink) == "omarchy_speaker_tuning" ]]; then
+  pass "audio tuning reports its sink while the tuning is present"
+else
+  fail "audio tuning reports its sink while the tuning is present"
+fi
+
+if SINKS_FIXTURE="$tuned_sinks_bare" OMARCHY_PATH="$ROOT" PATH="$stub_bin:$PATH" "$ROOT/bin/omarchy-audio-tuning" sink >/dev/null; then
+  fail "audio tuning reports no sink when the tuning is absent"
+else
+  pass "audio tuning reports no sink when the tuning is absent"
 fi

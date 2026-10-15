@@ -33,12 +33,24 @@ timeout 2 pactl set-card-profile "$card_name" "$profile_name"
 output_mapping=${profile_name#output:}
 output_mapping=${output_mapping%%+*}
 for _ in {1..20}; do
-  sink=$(timeout 2 pactl -f json list sinks 2>/dev/null | jq -c --arg card "$card_name" --arg profile "$output_mapping" '
+  sinks=$(timeout 2 pactl -f json list sinks 2>/dev/null)
+  sink=$(jq -c --arg card "$card_name" --arg profile "$output_mapping" '
     first(.[]
       | select(.properties["device.name"] == $card)
       | select(.properties["device.profile.name"] == $profile)) // empty
-  ')
+  ' <<<"$sinks")
   if [[ -n $sink ]]; then
+    # Same rule as the output switcher: the physical sink an active speaker tuning
+    # fronts must not become the default, or playback skips the tuning. Hand the
+    # profile's output to the tuning sink instead.
+    fronted=$(omarchy-audio-tuning fronted-sink 2>/dev/null || true)
+    if [[ -n $fronted && $(jq -r '.name' <<<"$sink") == "$fronted" ]]; then
+      tuning=$(omarchy-audio-tuning sink 2>/dev/null || true)
+      tuning_sink=$(jq -c --arg name "$tuning" 'first(.[] | select(.name == $name)) // empty' <<<"$sinks")
+      if [[ -n $tuning_sink ]]; then
+        sink=$tuning_sink
+      fi
+    fi
     omarchy-audio-output-set-default "$(jq -r '.index' <<<"$sink")" "$(jq -r '.name' <<<"$sink")"
     exit 0
   fi

@@ -89,6 +89,35 @@ assertEqual(duplexRows[0].label, 'DELL U2720Q', 'audio labels the active duplex 
 assertEqual(duplexRows[1].profileName, 'output:analog-stereo+input:analog-stereo', 'audio activates the full duplex profile to keep the microphone')
 const unboundDuplexRows = audio.outputRows([{ ...duplexSink, ready: false }], duplexProfiles)
 assertEqual(unboundDuplexRows.length, 2, 'audio matches an unbound duplex sink by name')
+// Rows sharing a label still keep a fixed order, whichever one is active and
+// however the graph happens to list the sinks.
+const twinProfiles = [
+  { cardName: 'alsa_card.a', profileName: 'output:hdmi-stereo', label: 'HDMI / DisplayPort', description: 'Digital Stereo' },
+  { cardName: 'alsa_card.b', profileName: 'output:hdmi-stereo', label: 'HDMI / DisplayPort', description: 'Digital Stereo' }
+]
+const twinSinkA = { name: 'alsa_output.a.hdmi-stereo', ready: true, properties: { 'device.name': 'alsa_card.a', 'device.profile.name': 'hdmi-stereo' } }
+const twinSinkB = { name: 'alsa_output.b.hdmi-stereo', ready: true, properties: { 'device.name': 'alsa_card.b', 'device.profile.name': 'hdmi-stereo' } }
+const twinsAActive = audio.outputRows([twinSinkA], twinProfiles).map((row) => audio.outputProfileSinkName(row.cardName || row.node.properties['device.name'], 'output:hdmi-stereo'))
+const twinsBActive = audio.outputRows([twinSinkB], twinProfiles.slice().reverse()).map((row) => audio.outputProfileSinkName(row.cardName || row.node.properties['device.name'], 'output:hdmi-stereo'))
+assertDeepEqual(twinsAActive, ['alsa_output.a.hdmi-stereo', 'alsa_output.b.hdmi-stereo'], 'audio orders equal labels by sink when the first output is active')
+assertDeepEqual(twinsBActive, twinsAActive, 'audio keeps equal labels in the same order when the other output is active')
+
+// A speaker tuning hides the physical speaker sink and makes its own sink the
+// default. The speaker profile is in use, so it must not come back as a second row.
+const tuningSink = { name: 'omarchy_speaker_tuning', ready: false }
+const speakerSink = {
+  name: 'alsa_output.pci-0000_00_1f.3.analog-stereo',
+  ready: true,
+  properties: { 'device.name': 'alsa_card.pci-0000_00_1f.3', 'device.profile.name': 'analog-stereo' }
+}
+const tunedProfiles = [
+  { cardName: 'alsa_card.pci-0000_00_1f.3', profileName: 'output:analog-stereo+input:analog-stereo', label: 'Speakers', description: 'Analog Stereo Duplex' },
+  { cardName: 'alsa_card.pci-0000_00_1f.3', profileName: 'output:hdmi-stereo+input:analog-stereo', label: 'DELL U2720Q', description: 'Digital Stereo (HDMI) Output' }
+]
+const tunedRows = audio.outputRows([tuningSink], tunedProfiles, [tuningSink, speakerSink])
+assertEqual(tunedRows.length, 2, 'audio does not offer the speaker profile beside an active speaker tuning')
+assertEqual(tunedRows.filter((row) => row.kind === 'profile').map((row) => row.label).join(','), 'DELL U2720Q', 'audio still offers the other outputs while a speaker tuning is active')
+assertEqual(audio.outputRows([tuningSink], tunedProfiles).length, 3, 'audio offers the speaker profile when no hidden sink uses it')
 assertEqual(audio.friendlyDeviceLabel('Built-in Audio Speakers Output'), 'Speakers', 'audio cleans device labels')
 assertEqual(
   audio.nodeLabel({ ready: true, properties: { 'node.nick': 'Built-in Audio Microphones Input' }, name: 'alsa_input' }),
